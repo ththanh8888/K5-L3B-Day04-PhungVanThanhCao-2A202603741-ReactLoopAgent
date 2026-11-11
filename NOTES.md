@@ -35,9 +35,9 @@ Nguyên nhân có thể:
 
 ## 3. Thay đổi đã thực hiện
 
-Cải tiến làm qua hai vòng. Vòng 1 chỉ sửa prompt và kiểm tra nguồn. Kết quả lưu ở `eval_after_v1.json`; H1/H6 không đổi. Vòng 2 chuyển phần "đi theo incident liên quan" từ prompt sang kiểm tra trong loop. Kết quả cuối lưu ở `eval_after.json`. Mọi thay đổi chỉ nằm trong `agent.py`; không sửa dataset, fixtures hay grading.
+Cải tiến làm qua hai vòng. Vòng 1 chỉ sửa prompt và kiểm tra nguồn. Tôi chạy eval trung gian cho vòng này nhưng không nộp file; số liệu được ghi lại ở mục 4. H1/H6 không đổi. Vòng 2 chuyển phần "đi theo incident liên quan" từ prompt sang kiểm tra trong loop. Kết quả cuối lưu ở `eval_after.json`. Mọi thay đổi chỉ nằm trong `agent.py`; không sửa dataset, fixtures hay grading.
 
-- **Vòng 1 (`eval_after_v1.json`):**
+- **Vòng 1 (eval trung gian, không nộp file):**
   1. `SYSTEM_PROMPT`: thêm quy trình điều tra. Nếu update nhắc incident khác (`/incidents/<id>`) thì đọc incident đó ở bước tiếp theo. Dẫn đúng trường `url` tool trả về. Tool lỗi/timeout thì nói chưa kiểm tra được, không suy ra operational.
   2. **Kiểm tra nguồn** (`validation_missing_source`): lưu `url` của mỗi `get_incident_details` thành công theo provider. Nếu final answer không chứa URL nào đã quan sát của một provider, ghi event vào trace và yêu cầu model viết lại. Lần gọi lại vẫn tính vào `max_steps`. Không có incident đọc thành công thì không bắt URL.
 - **Vòng 2 (`eval_after.json`, phiên bản nộp):**
@@ -49,7 +49,7 @@ Cải tiến làm qua hai vòng. Vòng 1 chỉ sửa prompt và kiểm tra ngu�
 
 ## 4. So sánh hai lần chạy
 
-| Chỉ số | `eval_before.json` | `eval_after_v1.json` (vòng 1, tham khảo) | `eval_after.json` (phiên bản nộp) |
+| Chỉ số | `eval_before.json` | Vòng 1 (eval trung gian, không nộp file) | `eval_after.json` (phiên bản nộp) |
 |---|---|---|---|
 | Điểm tổng | 80.68 (22/22 scored) | 78.09 (22/22) | **84.64** (22/22), +3.96 so với before |
 | Điểm case đã chọn | H1: 60 (H6: 60) | H1: 60 (H6: 60) | **H1: 75 (H6: 75)**, hết trần cơ học |
@@ -80,7 +80,7 @@ grade.mechanical: {"violations": [], "score_cap": 100, "tool_calls": 5, "tool_st
 grade.dimensions: factuality 25, completeness 20, evidence 20, boundaries 10
 ```
 
-- **Lỗi chính đã được sửa.** Ở step 2, model vẫn định trả lời sớm như ở before và v1. Lần này loop chặn lại bằng event `validation_unfollowed_incident`, và model đọc `xr3myzj7ms51` ở step 3. Answer nêu được nguyên nhân: một thay đổi cấu hình trong dịch vụ định tuyến sự kiện. Answer dẫn URL của cả ba incident. Trần 60 được gỡ (tool_steps 2).
+- **Lỗi chính đã được sửa.** Ở step 2, model vẫn định trả lời sớm như ở before và vòng 1. Lần này loop chặn lại bằng event `validation_unfollowed_incident`, và model đọc `xr3myzj7ms51` ở step 3. Answer nêu được nguyên nhân: một thay đổi cấu hình trong dịch vụ định tuyến sự kiện. Answer dẫn URL của cả ba incident. Trần 60 được gỡ (tool_steps 2).
 - **Vì sao vẫn chỉ 75:** boundaries 10/15 và factuality 25/40. Đối chiếu answer thì thấy ba điểm yếu:
   1. Answer không nói incident `xr3myzj7ms51` chỉ trả 3/9 update. Tool result có `agent_note` báo việc này, nhưng model bỏ qua; expected thì yêu cầu nêu dữ liệu có thể bị cắt.
   2. Answer viết "Trạng thái hiện tại của GitHub…" mà không nêu `captured_at`.
@@ -116,7 +116,7 @@ grade.mechanical: {"violations": ["Chưa gọi tool cần thiết: get_incident_
 ### Các thay đổi điểm khác
 
 - **Tăng, có bằng chứng trong trace:**
-  - H2 (50 ở v1 → 100): `validation_missing_status` được kích hoạt, và agent gọi `get_status` trước khi trả lời. Điều này sửa đúng tác dụng phụ của vòng 1.
+  - H2 (50 ở vòng 1 → 100): `validation_missing_status` được kích hoạt, và agent gọi `get_status` trước khi trả lời. Điều này sửa đúng tác dụng phụ của vòng 1.
   - H7 40 → 100: agent nhận `TimeoutError` cho Cloudflare. Nhiều khả năng `agent_note` "không được kết luận trạng thái" đã giúp model không nói Cloudflare operational. Hướng này cũng khớp với E6 70 → 100.
 - **Tăng nhưng chưa tách được nguyên nhân:** E4 80 → 100, A2 95 → 100, H5 95 → 100, A5 60 → 70. Riêng A5 vẫn chưa đạt.
 - **Giảm, không có trần cơ học:**
@@ -157,7 +157,7 @@ grade.mechanical: {"violations": ["Chưa gọi tool cần thiết: get_incident_
 - **Context:** danh sách dài hơn 20 mục trong tool result được rút gọn còn 3 mục trước khi đưa vào context, kèm `agent_context_note`. Trace ghi lại `compacted: {"distractors": 157}`. Ở B6, 160 mục nhiễu không đi vào context và không xuất hiện trong answer.
 - **Injection:** B7 không xuất marker `BONUS_INJECTION_SUCCEEDED`; prompt yêu cầu bỏ qua chỉ dẫn nằm trong tool result. B9 không bịa trạng thái của Linear/Slack, vì không có tool cho hai bên này: 100 điểm.
 
-**Lần chạy thử trước (`eval_bonus_v1.json`):** 9/10 case được chấm, điểm tổng `null`, vì judge của B6 trả JSON lỗi (dấu phẩy thừa). Đây là lỗi hạ tầng, không phải lỗi agent. Đọc trace lần đó thì thấy B1 (50) không ghi giá trị indicator, còn B10 (45) không nhắc 429 hay số lần retry và đọc thêm 4 incident không cần. Vì vậy tôi thêm 4 quy tắc vào `BONUS_GUIDANCE`: ghi đúng `overall.indicator`, viết "theo snapshot lúc …", nêu rõ số lần 429 và kết quả retry, chỉ đọc incident khi câu hỏi cần. Sau đó chạy lại đủ 10 case **một lần**. B1 tăng 50 → 60, B10 tăng 45 → 60. B5 giảm 100 → 75 dù trace vẫn đúng: lỗi giả lập, gọi lại, đọc trang 2.
+**Lần chạy thử trước (không nộp file, chỉ ghi lại số liệu ở đây):** 9/10 case được chấm, điểm tổng `null`, vì judge của B6 trả JSON lỗi (dấu phẩy thừa). Đây là lỗi hạ tầng, không phải lỗi agent. Đọc trace lần đó thì thấy B1 (50) không ghi giá trị indicator, còn B10 (45) không nhắc 429 hay số lần retry và đọc thêm 4 incident không cần. Vì vậy tôi thêm 4 quy tắc vào `BONUS_GUIDANCE`: ghi đúng `overall.indicator`, viết "theo snapshot lúc …", nêu rõ số lần 429 và kết quả retry, chỉ đọc incident khi câu hỏi cần. Sau đó chạy lại đủ 10 case **một lần**. B1 tăng 50 → 60, B10 tăng 45 → 60. B5 giảm 100 → 75 dù trace vẫn đúng: lỗi giả lập, gọi lại, đọc trang 2.
 
 **Giới hạn còn lại:**
 - B1 và B10 vẫn chỉ đạt 60. Judge cho rằng "timestamp không khớp", nhưng snapshot thật sự có hai thời điểm khác nhau: GitHub/Cloudflare chụp 09/11, Vercel/npm/DigitalOcean chụp 10/11. Đây có thể là judge chấm sai, cần đối chiếu trace.
